@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 import logging; logging.basicConfig(level=logging.INFO)
 #一行中书写多条句必须使用分号分隔每个语句，否则Python无法识别语句之间的间隔
 import asyncio, os, json, time
@@ -23,3 +25,4 @@ loop = asyncio.get_event_loop()
 #执行coroutine
 loop.run_until_complete(init(loop))
 loop.run_forever()
+
