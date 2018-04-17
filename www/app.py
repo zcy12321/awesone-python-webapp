@@ -6,6 +6,47 @@ import asyncio, os, json, time
 from datetime import datetime
 
 from aiohttp import web
+from jinja2 import Environment, FileSystemLoader
+
+import orm 
+from coroweb import add_routes, add_static
+
+def init_jinja2(app, **kw):
+	logging.info('init jinja2...')
+	options = dict(
+		# 自动转义xml/html的特殊字符  
+		autoescape = kw.get('autoescape', True),  
+		# 代码块的开始、结束标志  
+		block_start_string = kw.get('block_start_string', '{%'),  
+		block_end_string = kw.get('block_end_string', '%}'),  
+		# 变量的开始、结束标志  
+		variable_start_string = kw.get('variable_start_string', '{{'),  
+		variable_end_string = kw.get('variable_end_string', '}}'),  
+		# 自动加载修改后的模板文件  
+		auto_reload = kw.get('auto_reload', True)  
+		)
+	path = kw.get('path', None)
+	if not path:
+		path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'templates')
+	env = Environment(loader = FileSystemLoader(path), **options)
+	filters = kw.get('filters', None)
+	if filters:
+		for name, f in filters.items():
+			env.filters[name] = f
+	app['__template__'] = env
+
+def datetime_filter(t):
+	delta = int(time.time() - t)
+	if delta < 60:
+		return u'1分钟前'
+	if delta < 3600:
+		return u'%s分钟前' % (delta//60)
+	if delta < 86400:
+		return u'%s小时前' % (delta//3600)	
+	if delta < 604800:
+		return u'%s天前' % (delta//86400)
+	dt = datetime.fromtimestamp(t)
+	return u'%s年%s月%s日' % (dt.year, dt.month, dt.day)
 
 def index(request):
 	return web.Response(text='<h1>你好！妳好（繁體字）</h1>', content_type='text/html',charset='utf-8')
@@ -65,14 +106,15 @@ def response_factory(app, handler):
 
 
 
-@asyncio.coroutine
-def init(loop):
+
+async def init(loop):
+	await orm.create_pool(loop=loop, host='127.0.0.1', port=3306, user='www', password='www', db='awesome')
 	app = web.Application(loop=loop, middlewares=[logger_factory, response_factory])
 	init_jinja2(app, filters=dict(datetime=datetime_filter))
 	add_routes(app, 'handlers')
 	add_static(app)
 	app.router.add_route('GET', '/', index)
-	srv = yield from loop.create_server(app.make_handler(), '127.0.0.1', 9000)
+	srv = await loop.create_server(app.make_handler(), '127.0.0.1', 9000)
 	logging.info('server started at http://127.0.0.1:9000...')
 	return srv
 #获取EventLoop：
