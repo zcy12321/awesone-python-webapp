@@ -64,6 +64,18 @@ def logger_factory(app, handler):
 		return (yield from handler(request))
 	return logger
 
+async def data_factory(app, handler):
+	async def parse_data(request):
+		if request.method == 'POST':
+			if request.content_type.startswith('application/json'):
+				request.__data__ = await request.json()
+				logging.info('request json: %s' % str(request.__data__))
+			elif request.content_type.startswith('application/x-www-form-urlencoded'):
+				request.__data__ = await request.post()
+				logging.info('request form: %s' % str(request.__data__))
+		return (await handler(request))
+	return parse_data
+
 @asyncio.coroutine
 def response_factory(app, handler):
 	@asyncio.coroutine
@@ -104,11 +116,8 @@ def response_factory(app, handler):
 		return resp
 	return response
 
-
-
-
 async def init(loop):
-	await orm.create_pool(loop=loop, host='127.0.0.1', port=3306, user='www', password='www', db='awesome')
+	await orm.create_pool(loop=loop, host='127.0.0.1', port=3306, user='root', password='password', db='awesome')
 	app = web.Application(loop=loop, middlewares=[logger_factory, response_factory])
 	init_jinja2(app, filters=dict(datetime=datetime_filter))
 	add_routes(app, 'handlers')
