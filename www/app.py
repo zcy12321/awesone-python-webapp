@@ -9,7 +9,7 @@ from aiohttp import web
 from jinja2 import Environment, FileSystemLoader
 
 import orm 
-from coroweb import add_routes, add_static
+from coroweb import add_routes, add_static, get, post
 
 def init_jinja2(app, **kw):
 	logging.info('init jinja2...')
@@ -47,12 +47,6 @@ def datetime_filter(t):
 		return u'%s天前' % (delta//86400)
 	dt = datetime.fromtimestamp(t)
 	return u'%s年%s月%s日' % (dt.year, dt.month, dt.day)
-
-def index(request):
-	return web.Response(text='<h1>你好！妳好（繁體字）</h1>', content_type='text/html',charset='utf-8')
-#GB2312是中国规定的汉字编码，简体中文的字符集编码，
-#GBK是GB2312的扩展 ,兼容GB2312、显示繁体中文、日文的假名
-#UTF-8是全世界通用的
 
 @asyncio.coroutine
 def logger_factory(app, handler):
@@ -122,7 +116,7 @@ async def init(loop):
 	init_jinja2(app, filters=dict(datetime=datetime_filter))
 	add_routes(app, 'handlers')
 	add_static(app)
-	app.router.add_route('GET', '/', index)
+#	app.router.add_route('GET', '/', index)
 	srv = await loop.create_server(app.make_handler(), '127.0.0.1', 9000)
 	logging.info('server started at http://127.0.0.1:9000...')
 	return srv

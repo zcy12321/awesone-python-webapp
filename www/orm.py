@@ -3,16 +3,17 @@
 #ORM全称“Object Relational Mapping”，即对象-关系映射，就是把关系数据库的一行映射为一个对象，
 #也就是一个类对应一个表，这样，写代码更简单，不用直接操作SQL语句。
 import asyncio, logging
+
 import aiomysql
 
 def log(sql, args=()):
 	logging.info('SQL:%s' % sql)
 #创建连接池,调用异步IO来创建__pool
-@asyncio.coroutine
-def create_pool(loop, **kw):#**kw是关键字参数，用于字典
+
+async def create_pool(loop, **kw):#**kw是关键字参数，用于字典
 	logging.info('create database connection pool...')
 	global __pool #定义全局变量__pool
-	__pool = yield from aiomysql.create_pool(
+	__pool = await aiomysql.create_pool(
 		host = kw.get('host', 'localhost'),#get()函数，两个参数（查找的键，不存在返回的值）
 		port = kw.get('port', 3306),
 		user = kw['user'],
@@ -25,30 +26,20 @@ def create_pool(loop, **kw):#**kw是关键字参数，用于字典
 		loop = loop
 		)
 
-@asyncio.coroutine
-def close_pool():
-	logging.info('close database connection pool...')
-	global __pool
-	__pool.close()
-	yield from __pool.wait_closed()
-#Select函数，需要传入SQL语句和SQL参数
-@asyncio.coroutine
-def select(sql, args, size=None):
+async def select(sql, args, size=None):
 	log(sql, args)
 	global __pool
-	with (yield from __pool) as conn:
-		cur = yield from conn.cursor(aiomysql.DictCursor)#游标返回结果作为dict
-		yield from cur.execute(sql.replace('?', '%s'), args or ())#SQL语句的占位符是?，而MySQL的占位符是%s
-		if size:
-			rs = yield from cur.fetchmany(size)#如果传入size参数，就通过fetchmany()获取最多指定数量的记录
-		else:
-			rs = yield from cur.fetchall()#否则，通过fetchall()获取所有记录。
-		yield from cur.close()#关闭游标，不用手动关闭conn，因为with as 语句，conn会自动关闭
+	async with __pool.get() as conn:
+		async with conn.cursor(aiomysql.DictCursor) as cur:#游标返回结果作为dict
+			await cur.execute(sql.replace('?', '%s'), args or ())
+			if size:
+				rs = await cur.fetchmany(size)#如果传入size参数，就通过fetchmany()获取最多指定数量的记录
+			else:
+				rs = await cur.fetchall()#否则，通过fetchall()获取所有记录。
 		logging.info('rows returned: %s' % len(rs))
 		return rs#返回查询结构，元素是tuple的list
 
 #通用的execute()函数，用于执行INSERT、UPDATE、DELETE语句
-
 async def execute(sql, args, autocommit=True):
 	log(sql)
 	async with __pool.get() as conn:
@@ -68,12 +59,13 @@ async def execute(sql, args, autocommit=True):
 # 这个函数主要是把查询字段计数 替换成sql识别的?  
 # 比如说：insert into  `User` (`password`, `email`, `name`, `id`) values (?,?,?,?)  看到了么 后面这四个问号  
 def create_args_string(num):
-	lol = []
+	L = []
 	for n in range(num):
-		lol.append('?')
-	return (','.join(lol))
+		L.append('?')
+	return (', '.join(L))
 # 定义Field类，负责保存(数据库)表的字段名和字段类型			
 class Field(object):
+
 	def __init__(self, name, column_type, primary_key, default):
 		self.name = name
 		self.column_type = column_type
@@ -90,17 +82,24 @@ class StringField(Field):
 		super().__init__(name, ddl, primary_key, default)#引入super()的目的是保证相同的基类只初始化一次
 # 布尔类型不可以作为主键		
 class BooleanField(Field):
+
 	def __init__(self, name=None, default=False):
-		super().__init__(name, 'Boolean',False, default)
+		super().__init__(name, 'boolean',False, default)
+
 class IntegerField(Field):
+
 	def __init__(self, name=None, primary_key=False, default=0):
-		super().__init__(name, 'int', primary_key, default)
+		super().__init__(name, 'bigint', primary_key, default)
+
 class FloatField(Field):
-	def __init__(self, name=None, primary_key=False, default=0):
-		super().__init__(name,'float',primary_key, default)
+
+	def __init__(self, name=None, primary_key=False, default=0.0):
+		super().__init__(name,'real',primary_key, default)
+
 class TextField(Field):
-	def __init__(self, name=None, primary_key=False, default=0):
-		super().__init__(name,'text',False, default)
+
+	def __init__(self, name=None, default=None):
+		super().__init__(name,'text', False, default)
 		
 # -*-定义Model的元类  
 # 所有的元类都继承自type  
@@ -115,6 +114,7 @@ class TextField(Field):
 # 完成这些工作就可以在Model中定义各种数据库的操作方法  
 # metaclass是类的模板，所以必须从`type`类型派生： 
 class ModelMetaclass(type):#元类
+
 	def __new__(cls, name, bases, attrs):
 		#排除model本身,因为要排除对model类的修改
 		if name == 'Model':
@@ -138,7 +138,7 @@ class ModelMetaclass(type):#元类
 				else:
 					fields.append(k)
 		if not primaryKey:#一个表必须有一个主键,否则报错  
-			raise RuntimeError('Primary key not found')
+			raise StandardError('Primary key not found')
 		# 下面位字段从类属性中删除Field 属性 	
 		for k in mappings.keys():
 			attrs.pop(k)
@@ -148,10 +148,10 @@ class ModelMetaclass(type):#元类
 		attrs['__primary_key__'] = primaryKey#主键属性名
 		attrs['__fields__'] = fields#除主键外的属性名
 		# 构造默认的SELECT, INSERT, UPDATE和DELETE语句:
-		attrs['__select__'] = 'select `%s` , `%s` from `%s`' % (primaryKey, ', '.join(escaped_fields), tableName)
-		attrs['__insert__'] = 'insert into `%s` (`%s`, `%s`) values (`%s`)' %(tableName, ','.join(escaped_fields), primaryKey, create_args_string(len(escaped_fields)+1))
-		attrs['__update__'] = 'update `%s` set `%s` where `%s` = ?' % (tableName, ','.join(map(lambda f: '`%s` = ?' % (mappings.get(f).name or f), fields)), primaryKey)
-		attrs['__delete__'] = 'delete from `%s` where `%s` = ?' % (tableName, primaryKey)
+		attrs['__select__'] = 'select `%s`, %s from `%s`' % (primaryKey, ', '.join(escaped_fields), tableName)
+		attrs['__insert__'] = 'insert into `%s` (%s, `%s`) values (%s)' % (tableName, ', '.join(escaped_fields), primaryKey, create_args_string(len(escaped_fields)+1))
+		attrs['__update__'] = 'update `%s` set %s where `%s`=?' % (tableName, ', '.join(map(lambda f: '`%s` = ?' % (mappings.get(f).name or f), fields)), primaryKey)
+		attrs['__delete__'] = 'delete from `%s` where `%s`=?' % (tableName, primaryKey)
 		return type.__new__(cls, name, bases, attrs)
 # 定义ORM所有映射的基类：Model  
 # Model类的任意子类可以映射一个数据库表  
@@ -186,15 +186,14 @@ class Model(dict, metaclass=ModelMetaclass):
 		return value
 
 	@classmethod
-	@asyncio.coroutine
-	def findAll(cls, where=None, atgs=None, **kw):
+	async def findAll(cls, where=None, args=None, **kw):
+		' find objects by where clause. '
 		sql = [cls.__select__]
 		if where:
 			sql.append('where')
-			sql.qppend(where)
-		if atgs is None:
+			sql.append(where)
+		if args is None:
 			args = []
-
 		orderBy = kw.get('orderBy', None)
 		if orderBy:
 			sql.append('order by')
@@ -207,11 +206,11 @@ class Model(dict, metaclass=ModelMetaclass):
 				args.append(limit)
 			elif isinstance(limit, tuple) and len(limit) == 2:
 				sql.append('?, ?')
-				atgs.extend(limit)
+				args.extend(limit)
 			else:
-				raise ValureError('Invalid limit value : %s' % str(limit))
-		rs = yield from select(' '.join(sql), args)#返回的rs是一个元素是tuple的list
-		return [cls(**r) for r in rs]# **r 是关键字参数，构成了一个cls类的列表，其实就是每一条记录对应的类实例  
+				raise ValueError('Invalid limit value: %s' % str(limit))
+		rs = await select(' '.join(sql), args)
+		return [cls(**r) for r in rs]
 
 	@classmethod
 	@asyncio.coroutine

@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import functools, asyncio, inspect, logging, os
+
 from urllib import parse
+
 from aiohttp import web
+
 from apis import APIError
 
 def get(path):
@@ -26,36 +29,36 @@ def post(path):
 	return decorator
 
 # inspect.Parameter.kind 类型：  
-# POSITIONAL_ONLY          位置参数  
-# KEYWORD_ONLY             命名关键词参数  
-# VAR_POSITIONAL           可选参数 *args  
-# VAR_KEYWORD              关键词参数 **kw  
-# POSITIONAL_OR_KEYWORD    位置或必选参数 
+# POSITIONAL_ONLY		  位置参数  
+# KEYWORD_ONLY			 命名关键词参数  
+# VAR_POSITIONAL		   可选参数 *args  
+# VAR_KEYWORD			  关键词参数 **kw  
+# POSITIONAL_OR_KEYWORD	位置或必选参数 
 def get_required_kw_args(fn):# 获取无默认值的命名关键词参数
 	args = []
 	params = inspect.signature(fn).parameters#返回一个包含函数参数的有序字典Orderdict
-	for name, param in params.iteams():
+	for name, param in params.items():
 		if param.kind == inspect.Parameter.KEYWORD_ONLY and param.default == inspect.Parameter.empty:#empty代表无默认值
-			args.appeng(name)
+			args.append(name)
 	return tuple(args)
 
 def get_named_kw_args(fn):#获取命名关键词参数
 	args = []
-	param = inspect.signature(fn).parameters
-	for name, param in params.iteams():
+	params = inspect.signature(fn).parameters
+	for name, param in params.items():
 		if param.kind == inspect.Parameter.KEYWORD_ONLY:
-			args.appeng(name)
+			args.append(name)
 	return tuple(args)
 
 def has_named_kw_args(fn):#判断是否有命名关键字参数
-	param = inspect.signature(fn).parameters
-	for name, param in params.iteams():
+	params = inspect.signature(fn).parameters
+	for name, param in params.items():
 		if param.kind == inspect.Parameter.KEYWORD_ONLY:
 			return True
 
 def has_var_kw_arg(fn):#判断是否有可选参数
-	param = inspect.signature(fn).parameters
-	for name, param in params.iteams():
+	params = inspect.signature(fn).parameters
+	for name, param in params.items():
 		if param.kind == inspect.Parameter.VAR_KEYWORD:
 			return True
 
@@ -63,7 +66,7 @@ def has_request_arg(fn):# 判断是否含有名叫'request'的参数，且位置
 	sig = inspect.signature(fn)
 	params = sig.parameters
 	found = False
-	for name, param in params.iteam():
+	for name, param in params.items():
 		if name == 'request':
 			found = True
 			continue
@@ -75,33 +78,34 @@ def has_request_arg(fn):# 判断是否含有名叫'request'的参数，且位置
 	return found	
 
 class RequestHandler(object):#从URL函数中分析其需要接收的参数，从request中获取必要的参数，调用URL函数，然后把结果转换为web.Response对象
+
 	def __init__(self, app, fn):
-		self.app = app
-		self.func = fn
+		self._app = app
+		self._func = fn
 		self._required_kw_args = get_required_kw_args(fn)
 		self._named_kw_args = get_named_kw_args(fn)
 		self._has_request_arg = has_request_arg(fn)
 		self._has_named_kw_args = has_named_kw_args(fn)
 		self._has_var_kw_arg = has_var_kw_arg(fn)
 
-async def __call__(self, requese):
+	async def __call__(self, request):
 		kw = None
-		if self._has_named_kw_args or self._has_var_kw_args:#若视图函数有命名关键词或关键词参数
+		if self._has_var_kw_arg or self._has_named_kw_args or self._required_kw_args:#若视图函数有命名关键词或关键词参数
 			if request.method == 'POST':
 				# 根据request参数中的content_type使用不同解析方法：
-				if request.content_type == None:# 如果content_type不存在，返回400错误
-					return web.HTTPBadRequest(text='Missing Content_Type.')
+				if not request.content_type:# 如果content_type不存在，返回400错误
+					return web.HTTPBadRequest('Missing Content_Type.')
 				ct = request.content_type.lower()#小写，便于检查
 				if ct.startswith('application/json'):
 					params = await request.json()
 					if not isinstance(params, dict):
-						return web.HTTPBadRequest(text='JSON body must be object.')
+						return web.HTTPBadRequest('JSON body must be object.')
 					kw = params
 				elif ct.startswith('application/x-www-form-urlencoded') or ct.startswith('mulipart/form-data'):
 					params = await request.post()
 					kw = dict(**params)
 				else:
-					return web.HTTPBadRequest(text='Unsupported Content_Type: %s' % request.content_type)
+					return web.HTTPBadRequest('Unsupported Content_Type: %s' % request.content_type)
 			if request.method == 'GET':
 				qs = request.query_string
 				if qs:
@@ -111,7 +115,7 @@ async def __call__(self, requese):
 		if kw is None:
 			kw = dict(**request.match_info)
 		else:
-			if self._has_named_kw_args and (not self._has_var_kw_args):
+			if not self._has_var_kw_arg and self._named_kw_args:
 				copy = dict()
 				for name in self._named_kw_args:
 					if name in kw:
@@ -128,8 +132,12 @@ async def __call__(self, requese):
 				if not name in kw:
 					return web.HTTPBadRequest('Missing argument: %s' % name)
 		logging.info('call with args: %s' % str(kw))
-		r = await self._func(**kw)
-		return r
+		try:
+			r = await self._func(**kw)
+			return r
+		except APIError as e:
+			return dict(error=e.error, data=e.data, message=e.message)
+
 #静态文件注册函数
 def add_static(app):
 	path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static')
@@ -139,11 +147,11 @@ def add_static(app):
 def add_route(app, fn):
 	method = getattr(fn,'__method__', None)#存在__method__方法，则返回方法地址，否则返回None
 	path = getattr(fn, '__route__', None)
-	if method is None or path is None:
+	if path is None or method is None:
 		raise ValueError('@get or @post not defined in %s.' % str(fn))
 	if not asyncio.iscoroutinefunction(fn) and not inspect.isgeneratorfunction(fn):
-		fn = asyncio.corouttine(fn)
-	logging.info('add route %s %s => %s(%s)' % (method, path, fn.__name__, ','.join(inspect.signature(fn).parameters.keys())))
+		fn = asyncio.coroutine(fn)
+	logging.info('add route %s %s => %s(%s)' % (method, path, fn.__name__, ', '.join(inspect.signature(fn).parameters.keys())))
 	app.router.add_route(method, path, RequestHandler(app, fn))
 
 def add_routes(app, module_name):
@@ -158,7 +166,7 @@ def add_routes(app, module_name):
 			continue
 		fn = getattr(mod, attr)
 		if callable(fn):
-			mothod = getattr(fn, '__method__', None)
+			method = getattr(fn, '__method__', None)
 			path = getattr(fn, '__route__', None)
 			if method and path:
 				add_route(app, fn)
