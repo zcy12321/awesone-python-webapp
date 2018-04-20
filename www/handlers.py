@@ -18,6 +18,23 @@ def index(request):
 		'__template__': 'blogs.html',
 		'blogs': blogs
 	}
+@get('/api/users')
+async def api_get_users(request):
+	users = await User.findAll(orderBy='created_at desc')
+	for u in users:
+		u.passwd = '******'
+	return dict(users=users)
+
+	# page_index = get_page_index(page)
+	# num = yield from User.findNumber('count(id')
+	# p = Page(num, page_index)
+	# if num == 0:
+	# 	return dict(page=p, user=())
+	# users = yield from User.findAll(orderBy='created_at desc', limit=(p.offset, p.limit))
+	# for u in users:
+	# 	u.passwd = '******'
+	# return dict(page=p, users=users)
+	# pass
 #eturn web.Response(text='<h1>你好！妳好（繁體字）</h1>', content_type='text/html',charset='utf-8')
 #GB2312是中国规定的汉字编码，简体中文的字符集编码，
 #GBK是GB2312的扩展 ,兼容GB2312、显示繁体中文、日文的假名
