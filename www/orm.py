@@ -238,8 +238,8 @@ class Model(dict, metaclass=ModelMetaclass):
 		args = list(map(self.getValueOrDefault, self.__fields__))
 		args.append(self.getValueOrDefault(self.__primary_key__))
 		rows = yield from execute(self.__insert__, args)
-		if row != 1:
-			logging.warn('field to insert record: affected rows:%s' % row)
+		if rows != 1:
+			logging.warn('field to insert record: affected rows:%s' % rows)
 	@asyncio.coroutine
 	def update(self):
 		args = list(map(self.getValue, self.__fields__))
