@@ -74,7 +74,6 @@ async def auth_factory(app, handler):
 		return (await handler(request))
 	return auth
 
-
 async def data_factory(app, handler):
 	async def parse_data(request):
 		if request.method == 'POST':
@@ -143,4 +142,5 @@ loop = asyncio.get_event_loop()
 #执行coroutine
 loop.run_until_complete(init(loop))
 loop.run_forever()
+
 
